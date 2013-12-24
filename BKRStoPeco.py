@@ -14,11 +14,12 @@ params = {
     'write_to_db':            True,
     'output_database_file':   'bkrs.pqb',
     'from_word_number':       0 ,
-    'to_word_number':         2000000, #1835721
+    'to_word_number':         1000, #1835721
     'log_to_console':         False,
     'log_file':               'log_file.txt',
     'bad_words_file':         'BKRS_bad_words.html',
     'show_progress':          True,
+    'get_pron_from_CEDICT':   False,
 }
 
 
@@ -44,6 +45,7 @@ class BKRS2Pleco(object):
         self.last_error = ''
         self.last_error_info = ''
         self.bad_word_index = 0
+        
 
     def export(self):
         if self.params['write_to_db']:
@@ -243,8 +245,6 @@ class BKRS2Pleco(object):
 
 
     def create_db_index(self):
-        #self.cursor.execute('CREATE TABLE sqlite_sequence(name,seq);')
-        #self.cursor.execute('INSERT INTO sqlite_sequence VALUES("pleco_dict_entries",?);)',(self.db_last_insert_id,))
         self.cursor.execute('CREATE INDEX idx_pleco_dict_posdex_hz_1_syllable_uid_length ON pleco_dict_posdex_hz_1 ("syllable", "uid", "length");')
         self.cursor.execute('CREATE INDEX idx_pleco_dict_posdex_hz_1_uid ON pleco_dict_posdex_hz_1 (uid);')
         self.cursor.execute('CREATE INDEX idx_pleco_dict_posdex_hz_2_syllable_uid ON pleco_dict_posdex_hz_2 ("syllable", "uid");')
@@ -347,8 +347,13 @@ class BKRS2Pleco(object):
         except:
             self.log('Error: getReadingForCharacter. Hanzi: '+hanzi)
             return False 
+
         if not pron_variants:
-            pron_variants = self.get_cedict_pron_variants(hanzi)
+            if self.params['get_pron_from_CEDICT']:
+                pron_variants = self.get_cedict_pron_variants(hanzi)
+
+        if not pron_variants:
+            return False
 
         all_pron_variants = pron_variants
         if mixtones:
