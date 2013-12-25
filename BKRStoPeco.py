@@ -10,16 +10,18 @@ from cjklib.dictionary import CEDICT
 
 
 params = {
-    'input_bkrs_file':        'dabkrs_131222.txt',#'small_bkrs.txt',
+    'input_bkrs_file':        'dabkrs_131225.txt', #http://bkrs.info/p47  --> 大БКРС vXXXXXXXXX/  http://bkrs.info/downloads/daily/dabkrs_xxxxxx.gz
+    'unihan_file':            'Unihan_Readings.txt', #ftp://ftp.unicode.org/Public/UNIDATA/Unihan.zip
     'write_to_db':            True,
     'output_database_file':   'bkrs.pqb',
-    'from_word_number':       0 ,
-    'to_word_number':         1000, #1835721
+    'from_word_number':       0,
+    'to_word_number':         0, 
+    'approx_count_of_words':  2000000, #1835721
     'log_to_console':         False,
     'log_file':               'log_file.txt',
     'bad_words_file':         'BKRS_bad_words.html',
     'show_progress':          True,
-    'get_pron_from_CEDICT':   False,
+    'get_pron_from_CEDICT':   True,
 }
 
 
@@ -45,13 +47,16 @@ class BKRS2Pleco(object):
         self.last_error = ''
         self.last_error_info = ''
         self.bad_word_index = 0
-        
+        self.unihan_reading = {}
+        self.approx_count_of_words = params['approx_count_of_words']
 
+        self.log_file = open(self.params['log_file'], 'w', 1000)
+        
     def export(self):
         if self.params['write_to_db']:
             self.conn = sqlite3.connect(self.params['output_database_file'])
             self.cursor = self.conn.cursor()
-        self.log_file = open(self.params['log_file'], 'w', 1000)
+        
         self.bad_words_file = open(self.params['bad_words_file'], 'w', 1000)
         self.start_bad_words_file()
         
@@ -75,6 +80,8 @@ class BKRS2Pleco(object):
         num_pinyin_have_tone_mark = 0
         no_pron_symbols_in_pinyin = 0
 
+        self.load_readings_from_unihan()
+
         for line in self.dic:
             if line == '\n':
                 line_type = 'word'
@@ -92,8 +99,9 @@ class BKRS2Pleco(object):
                     elif line_type == 'translate':
                         if word_index <= self.SKIP_WORD_INDEX:
                             continue
-                        if word_index >= self.MAX_WORD_INDEX:
-                            break
+                        if self.MAX_WORD_INDEX > 0:
+                            if word_index >= self.MAX_WORD_INDEX:
+                                break
                         translate = (line[1:-1]).strip().decode('utf-8')
                         translate_with_tags = translate
                         translate = self.remove_html_tags(translate)
@@ -160,9 +168,257 @@ class BKRS2Pleco(object):
         self.dic.close()
         self.end_time = time.time()
         self.log('End of export. Total time: '+str(round(self.end_time - self.start_time ,2))+' sec')
-        self.log_file.close()
+        
         self.end_bad_words_file()
         self.bad_words_file.close()
+
+    def __del__(self):
+
+        self.log_file.close()
+
+    def get_string_pron(self, ob_pron): 
+        """Get list of pron: [pron1,pron2]
+        pron = [(hanzi, num_pinyin), ...]
+        return string 
+        """
+        if not ob_pron:
+            return ''
+        pronounciations = []
+        list_pron = []
+        for pron in ob_pron:
+            str_pron = ''
+            for hanzi, num_pinyin in pron:
+                str_pron = str_pron+num_pinyin
+            list_pron.append(str_pron)
+        return ', '.join(list_pron)
+
+    def convert_full_pinyin(self, hanziword, pinyin):
+        clean_hanzi = self.filter_hanzi(hanziword)
+        pinyin = self.filter_pinyin(pinyin)
+
+        if self.hanziword_have_comma(hanziword):
+            pinyin = pinyin.replace(',',' ')
+            
+        pinyins = pinyin.split(',')
+
+        if len(clean_hanzi) == 0: #
+            self.log('Error Hanzi word length is zero! Hanzi: '+hanziword+' clean Hanzi: '+clean_hanzi)
+            self.last_error = 'NOT_CHINESE_CHARS'
+            return False
+
+        if len(clean_hanzi) == 1:
+            return self.convert_pinyin(clean_hanzi, pinyin, single_hanzi = True)
+        if len(pinyins) > 1:
+            self.log('Multipronounce in pinyin: '+pinyin+' word: '+clean_hanzi)
+
+        pinyins_good_results = []
+        for atom_pinyin in pinyins:
+            pron = self.convert_pinyin(clean_hanzi, atom_pinyin)
+            if pron:
+                pinyins_good_results.append(pron)
+        return pinyins_good_results
+
+    def convert_pinyin(self, clean_hanzi, pinyin, single_hanzi = False):        
+        old_pinyin = pinyin
+        ob_pronounce = []
+        num_pinyin = ''
+
+        if single_hanzi:
+            all_pron_variants = self.get_all_pron_variants(clean_hanzi)
+            if not all_pron_variants:
+                self.log('cjklib 2 getReadingForCharacter() and CEDICT() return empty list for hanzi: '+clean_hanzi)
+                self.last_error = 'NO_PRON_VARIANTS'
+                return False
+            all_num_pron_variants = []
+            for v in all_pron_variants:
+                all_num_pron_variants.append([(clean_hanzi, self.get_num_pron(v))])
+
+            return all_num_pron_variants
+
+        for hanzi in clean_hanzi:
+            all_pron_variants = self.get_all_pron_variants(hanzi)
+            all_pron_variants_mixed = self.get_with_mixed_tones(all_pron_variants)
+            if not all_pron_variants_mixed:
+                if self.params['get_pron_from_CEDICT']:
+                    self.log('cjklib getReadingForCharacter() and CEDICT() return empty list for hanzi: '+hanzi)
+                else:
+                    self.log('cjklib getReadingForCharacter() return empty list for hanzi: '+hanzi)
+                self.last_error = 'NO_PRON_VARIANTS'
+                return False
+            not_found = True
+            for pron_var in all_pron_variants_mixed: 
+                if pinyin.startswith(pron_var):
+                    pinyin = pinyin.replace(pron_var, '', 1).strip()
+                    num_pron_var = self.get_num_pron(pron_var)
+                    ob_pronounce.append((hanzi,num_pron_var))
+                    num_pinyin = num_pinyin+num_pron_var 
+                    not_found = False
+                    break
+            if not_found:        
+                pstr = ' '.join('['+h+':'+p+']' for h,p in ob_pronounce)
+                self.log('Not found pron for hanzi: '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+'] P1:'+old_pinyin+' P2:'+pinyin+' '+pstr)
+                self.last_error_info = pstr+' '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+']'
+                return False
+
+        return ob_pronounce
+
+    def get_all_pron_variants(self, hanzi, mixtones = True):
+        pron_variants = []
+        try:
+            pron_variants = self.cjk.getReadingForCharacter(hanzi, 'Pinyin')
+        except:
+            self.log('Error: getReadingForCharacter. Hanzi: '+hanzi)
+            return []
+        try:
+            pron_variants = pron_variants + self.unihan_reading[hanzi]
+        except:
+            pass #No in UNIHAN databese
+
+        if not pron_variants:
+            if self.params['get_pron_from_CEDICT']:
+                pron_variants = self.get_cedict_pron_variants(hanzi)
+        if not pron_variants:
+            return []
+
+        unique_pron_vars = []
+        for v in pron_variants:
+            if v not in unique_pron_vars:
+                unique_pron_vars.append(v)
+
+        return unique_pron_vars
+
+    def get_with_mixed_tones(self, pron_var_list):
+
+        all_pron_variants = pron_var_list
+   
+        for pron_var in pron_var_list:
+            none_tone_pron = self.get_without_tone(pron_var)
+            alltones = self.get_all_tones(none_tone_pron)
+            all_pron_variants = all_pron_variants+alltones
+        for pron_var in pron_var_list:  
+            none_tone_pron = self.get_without_tone(pron_var)
+            all_pron_variants.append(none_tone_pron)
+
+        all_unique_pron_variants = []
+        for v in all_pron_variants:
+            if v not in all_unique_pron_variants:
+                all_unique_pron_variants.append(v)
+        all_unique_pron_variants.sort(key=len, reverse=True)
+
+        return all_unique_pron_variants
+
+    def load_readings_from_unihan(self):
+        self.log('Start loading UNIHAN reading database...')
+        unihanfile = open(self.params['unihan_file'])
+        words = 0
+        for line in unihanfile:
+            uline = line.decode('utf-8')
+            #print uline.encode('utf-8')
+            if uline.startswith('#'):
+                continue
+            if not uline.startswith('U+'):
+                continue
+            codepoint = int(uline.split('\t')[0].replace('U+',''), 16)
+            fieldname = uline.split('\t')[1]
+            fieldvalue = uline.split('\t')[2]
+            if fieldname == 'kHanyuPinyin':
+                charhanzi = cjklib.util.fromCodepoint(codepoint)
+                readings = fieldvalue.split(':')[1].split(',')
+                self.unihan_reading[charhanzi] = readings
+                words += 1
+        self.log('UNIHAN reading database loaded. Count of hieroglyph: '+str(words))
+
+
+    def filter_hanzi(self, hanziword):
+        # Unicode blocks for Chinese, Japanese and Korean:
+        #{InCJK_Compatibility}: U+3300–U+33FF
+        #{InCJK_Unified_Ideographs_Extension_A}: U+3400–U+4DBF 
+        #{InCJK_Unified_Ideographs}: U+4E00–U+9FFF
+        #{InCJK_Compatibility_Ideographs}: U+F900–U+FAFF
+        #{InCJK_Compatibility_Forms}: U+FE30–U+FE4F 
+
+        clean_word = ''
+        for char in re.findall(ur'[\u3300-\u33FF\u3400-\u4DBF\u4e00-\u9fff\uF900-\uFAFF\uFE30-\uFE4F]+', hanziword):
+            clean_word = clean_word+char
+        clean_word = clean_word.replace(u'﹐', '')
+        clean_word = clean_word.replace(u'，', '')
+        return clean_word
+
+    def hanziword_have_comma(self, hanziword):
+        if u'﹐' in hanziword:
+            return True
+        if u'，' in hanziword: 
+            return True
+        return False
+
+    def filter_pinyin(self, pinyin, for_human_detect = False):
+        pinyin = re.sub(r'[;,]+', ',', pinyin)
+        pinyin = re.sub(r'[,]+', ',', pinyin)
+        pinyin = re.sub(r'[‘’`-]+', ' ', pinyin)
+        pinyin = re.sub(r'[ ]+', ' ', pinyin)
+        pinyin = re.sub(r'\([^)]+\)', '', pinyin)
+
+
+        pinyin = pinyin.replace(u'ĕ',u'ě')
+        pinyin = pinyin.replace(u'ă',u'ǎ')
+        pinyin = pinyin.replace(u'ĭ',u'ǐ')
+        #pinyin = pinyin.replace('','')
+        #pinyin = pinyin.replace('','')
+        #pinyin = pinyin.replace('','')
+
+
+        if for_human_detect:
+            pinyin = re.sub(ur'([^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü,])','<b class="red">'+r'\1'+'</b>', pinyin)
+        else:
+            pinyin = re.sub(ur'[^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü,]',' ', pinyin)
+        pinyin = re.sub(ur'[ ]*,[ ]*',',', pinyin)
+        return pinyin.strip()
+
+    def log(self, message):
+        message = message.encode('utf-8')
+        con_time = time.strftime('%H:%M:%S')
+        log_time = time.strftime('%b %d %Y %H:%M:%S')
+        if self.params['log_to_console']:
+            try:
+                print con_time+'    '+message
+            except:
+                print con_time+'    '+'Log to console error'
+       
+        self.log_file.write(log_time+'  '+message+'\n')
+
+    def show_progress(self, cur_index, max_index):
+        if max_index <= 0:
+            max_index = self.approx_count_of_words
+        if cur_index%(int(max_index/100)) == 0:
+            self.log('Working... '+str(cur_index*100/max_index)+'%')
+        
+
+    def remove_html_tags(self, string, use_pleco_features = True):
+        if use_pleco_features:
+            new_line = self.PLC_NEW_LINE
+            start_bold = self.PLC_START_BOLD
+            stop_bold = self.PLC_STOP_BOLD
+        else:
+            new_line = ' \n'
+            start_bold = ' '
+            stop_bold = ' '
+        string = re.sub('\[m[1-9]\]\[\*\]\[ex\]', new_line, string)
+        string = re.sub('\[m1\]', ' ', string)
+        string = re.sub('\[ex\]', new_line, string)
+        string = re.sub('\[m2\]', new_line*2, string)
+        string = re.sub('\[m[3-9]\]', new_line, string)
+        string = re.sub('\[.*?\]', ' ', string)
+        string = re.sub(new_line+r'([0-9]+\))', new_line+start_bold+r'\1'+stop_bold, string)
+        return string
+
+    def remove_trash(self, word):
+        word = word.replace('\ ',' ')
+        word = word.replace('*',' ')
+        word = re.sub(r'[ ]+', ' ', word)
+        word = re.sub(r'[ ]+'+self.PLC_NEW_LINE, self.PLC_NEW_LINE, word)
+        word = re.sub(self.PLC_NEW_LINE+r'[ ]+', self.PLC_NEW_LINE, word)
+        return word
+
 
     def create_db(self):
         str_db_created = str(int(time.time()))
@@ -212,8 +468,9 @@ class BKRS2Pleco(object):
         ctime = str(int(time.time()))
         wordlen = len(word)
         translate = translate
+        first_pron = pronounce.split(',')[0]
         try:
-            self.cursor.execute('INSERT INTO pleco_dict_entries VALUES (NULL,?,?,?,?,NULL,?,?,?)', (ctime, ctime, wordlen, word, pronounce, translate, pronounce+word))
+            self.cursor.execute('INSERT INTO pleco_dict_entries VALUES (NULL,?,?,?,?,NULL,?,?,?)', (ctime, ctime, wordlen, word, pronounce, translate, first_pron+word))
             self.db_last_insert_id = self.cursor.lastrowid
         except:
             self.log('DB Error: '+str(sys.exc_info()[0])+' word: '+word)
@@ -264,193 +521,6 @@ class BKRS2Pleco(object):
         self.conn.commit()
                 
 
-    def get_string_pron(self, ob_pron): 
-        """Get list of pron: [pron1,pron2]
-        pron = [(hanzi, num_pinyin), ...]
-        return string 
-        """
-        if not ob_pron:
-            return ''
-        pronounciations = []
-        list_pron = []
-        for pron in ob_pron:
-            str_pron = ''
-            for hanzi, num_pinyin in pron:
-                str_pron = str_pron+num_pinyin
-            list_pron.append(str_pron)
-        return ', '.join(list_pron)
-
-    def convert_full_pinyin(self, hanziword, pinyin):
-        clean_hanzi = self.filter_hanzi(hanziword)
-        pinyin = self.filter_pinyin(pinyin)
-
-        if self.hanziword_have_comma(hanziword):
-            pinyin = pinyin.replace(',',' ')
-            
-        pinyins = pinyin.split(',')
-
-        if len(clean_hanzi) == 1:
-            return self.convert_pinyin(clean_hanzi, pinyin, single_hanzi = True)
-        if len(pinyins) > 1:
-            self.log('Multipronounce in pinyin: '+pinyin+' word: '+clean_hanzi)
-
-        pinyins_good_results = []
-        for atom_pinyin in pinyins:
-            pron = self.convert_pinyin(clean_hanzi, atom_pinyin)
-            if pron:
-                pinyins_good_results.append(pron)
-        return pinyins_good_results
-
-    def convert_pinyin(self, clean_hanzi, pinyin, single_hanzi = False):        
-        old_pinyin = pinyin
-        ob_pronounce = []
-        num_pinyin = ''
-
-        if single_hanzi:
-            all_pron_variants = self.get_all_pron_variants(clean_hanzi, mixtones = False)
-            if not all_pron_variants:
-                self.log('cjklib 2 getReadingForCharacter() and CEDICT() return empty list for hanzi: '+clean_hanzi)
-                self.last_error = 'NO_PRON_VARIANTS'
-                return False
-            all_num_pron_variants = []
-            for v in all_pron_variants:
-                all_num_pron_variants.append([(clean_hanzi, self.get_num_pron(v))])
-
-            return all_num_pron_variants
-
-        for hanzi in clean_hanzi:
-            all_pron_variants = self.get_all_pron_variants(hanzi)
-            if not all_pron_variants:
-                self.log('cjklib getReadingForCharacter() and CEDICT() return empty list for hanzi: '+hanzi)
-                self.last_error = 'NO_PRON_VARIANTS'
-                return False
-            not_found = True
-            for pron_var in all_pron_variants: 
-                if pinyin.startswith(pron_var):
-                    pinyin = pinyin.replace(pron_var, '', 1).strip()
-                    num_pron_var = self.get_num_pron(pron_var)
-                    ob_pronounce.append((hanzi,num_pron_var))
-                    num_pinyin = num_pinyin+num_pron_var 
-                    not_found = False
-                    break
-            if not_found:        
-                pstr = ' '.join('['+h+':'+p+']' for h,p in ob_pronounce)
-                self.log('Not found pron for hanzi: '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+'] P1:'+old_pinyin+' P2:'+pinyin+' '+pstr)
-                self.last_error_info = pstr+' '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+']'
-                return False
-
-        return ob_pronounce
-
-    def get_all_pron_variants(self, hanzi, mixtones = True):
-        try:
-            pron_variants = self.cjk.getReadingForCharacter(hanzi, 'Pinyin')
-        except:
-            self.log('Error: getReadingForCharacter. Hanzi: '+hanzi)
-            return False 
-
-        if not pron_variants:
-            if self.params['get_pron_from_CEDICT']:
-                pron_variants = self.get_cedict_pron_variants(hanzi)
-
-        if not pron_variants:
-            return False
-
-        all_pron_variants = pron_variants
-        if mixtones:
-            for pron_var in pron_variants:
-                none_tone_pron = self.get_without_tone(pron_var)
-                alltones = self.get_all_tones(none_tone_pron)
-                all_pron_variants = all_pron_variants+alltones
-            for pron_var in pron_variants:  
-                none_tone_pron = self.get_without_tone(pron_var)
-                all_pron_variants.append(none_tone_pron)
-
-            all_unique_pron_variants = []
-            for v in all_pron_variants:
-                if v not in all_unique_pron_variants:
-                    all_unique_pron_variants.append(v)
-            all_unique_pron_variants.sort(key=len, reverse=True)
-        else:
-            all_unique_pron_variants = all_pron_variants
-        return all_unique_pron_variants
-        
-
-    def filter_hanzi(self, hanziword):
-        clean_word = ''
-        for char in re.findall(ur'[\u4e00-\u9fff]+', hanziword):
-            clean_word = clean_word+char
-        clean_word = clean_word.replace(u'﹐', '')
-        clean_word = clean_word.replace(u'，', '')
-        return clean_word
-
-    def hanziword_have_comma(self, hanziword):
-        if u'﹐' in hanziword:
-            return True
-        if u'，' in hanziword: 
-            return True
-        return False
-
-    def filter_pinyin(self, pinyin, for_human_detect = False):
-        pinyin = re.sub(r'[;,]+', ',', pinyin)
-        pinyin = re.sub(r'[,]+', ',', pinyin)
-        pinyin = re.sub(r'[ ]+', ' ', pinyin)
-        if for_human_detect:
-            pinyin = re.sub(ur'([^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü,])','<b class="red">'+r'\1'+'</b>', pinyin)
-        else:
-            pinyin = re.sub(ur'[^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü,]',' ', pinyin)
-        pinyin = re.sub(ur'[ ]*,[ ]*',',', pinyin)
-        return pinyin.strip()
-
-    def log(self, message):
-        message = message.encode('utf-8')
-        con_time = time.strftime('%H:%M:%S')
-        log_time = time.strftime('%b %d %Y %H:%M:%S')
-        if self.params['log_to_console']:
-            try:
-                print con_time+'    '+message
-            except:
-                print con_time+'    '+'Log to console error'
-       
-        self.log_file.write(log_time+'  '+message+'\n')
-
-    def show_progress(self, cur_index, max_index):
-        if cur_index%(int(max_index/100)) == 0:
-            self.log('Working... '+str(cur_index*100/max_index)+'%')
-        
-
-    def remove_html_tags(self, string, use_pleco_features = True):
-        if use_pleco_features:
-            new_line = self.PLC_NEW_LINE
-            start_bold = self.PLC_START_BOLD
-            stop_bold = self.PLC_STOP_BOLD
-        else:
-            new_line = ' \n'
-            start_bold = ' '
-            stop_bold = ' '
-        string = re.sub('\[m[1-9]\]\[\*\]\[ex\]', new_line, string)
-        string = re.sub('\[m1\]', ' ', string)
-        string = re.sub('\[ex\]', new_line, string)
-        string = re.sub('\[m2\]', new_line*2, string)
-        string = re.sub('\[m[3-9]\]', new_line, string)
-        string = re.sub('\[.*?\]', ' ', string)
-        string = re.sub(new_line+r'([0-9]+\))', new_line+start_bold+r'\1'+stop_bold, string)
-        return string
-
-    def remove_trash(self, word):
-        word = word.replace('\ ',' ')
-        word = word.replace('*',' ')
-        word = re.sub(r'[ ]+', ' ', word)
-        word = re.sub(r'[ ]+'+self.PLC_NEW_LINE, self.PLC_NEW_LINE, word)
-        word = re.sub(self.PLC_NEW_LINE+r'[ ]+', self.PLC_NEW_LINE, word)
-        return word
-
-    def have_html_tags(self, string):
-        if re.search('\[.*?\]', string):
-            return True
-        else:
-            return False
-
-
     def have_pron_symbol(self, pron):
         pronsymbols = u'abcdefghijklmnopqrstuvwxyzāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü'
         pron = re.sub('\[.*?\]', ' ', pron)
@@ -464,12 +534,6 @@ class BKRS2Pleco(object):
         for tag in tagsymbols:
             if word.find(tag)!=-1:
                 return True
-        return False
-
-    def is_trash_symbol(self, symbol):
-        trash = u' …‘’`-.,;_()?'
-        if symbol in trash:
-            return True
         return False
 
     def get_all_tones(self, entity):
@@ -589,7 +653,11 @@ class BKRS2Pleco(object):
 </body>
         """
         self.bad_words_file.write(endhtml)
+
+
+
 ##############################################################################################################
 
 bkrs = BKRS2Pleco(params)
 bkrs.export()
+
