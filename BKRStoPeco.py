@@ -13,8 +13,8 @@ from cjklib.dictionary import CEDICT
 params = {
     'log_to_console':         False,
     'input_bkrs_file':        'dabkrs_140106.txt', #http://bkrs.info/p47  --> 大БКРС vXXXXXXXXX/  http://bkrs.info/downloads/daily/dabkrs_xxxxxx.gz
-    'unihan_file':            'Unihan_Readings.txt', #ftp://ftp.unicode.org/Public/UNIDATA/Unihan.zip
-    'add_readings_file':      'Additional_Readings.txt',
+    'unihan_file':            'Unihan_Readings', #ftp://ftp.unicode.org/Public/UNIDATA/Unihan.zip
+    'add_readings_file':      'Additional_Readings',
     'write_to_pleco_db':      True,
     'output_pleco_database_file':   'bkrs.pqb',
     'from_word_number':       0,
