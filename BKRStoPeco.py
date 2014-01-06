@@ -4,24 +4,27 @@ import sqlite3
 import time
 import sys
 import cjklib #http://cjklib.org/0.3/
+import operator
 from cjklib.reading import ReadingFactory 
 from cjklib import characterlookup
 from cjklib.dictionary import CEDICT
 
 
 params = {
-    'input_bkrs_file':        'dabkrs_131225.txt', #http://bkrs.info/p47  --> 大БКРС vXXXXXXXXX/  http://bkrs.info/downloads/daily/dabkrs_xxxxxx.gz
+    'log_to_console':         False,
+    'input_bkrs_file':        'dabkrs_140106.txt', #http://bkrs.info/p47  --> 大БКРС vXXXXXXXXX/  http://bkrs.info/downloads/daily/dabkrs_xxxxxx.gz
     'unihan_file':            'Unihan_Readings.txt', #ftp://ftp.unicode.org/Public/UNIDATA/Unihan.zip
-    'write_to_db':            True,
-    'output_database_file':   'bkrs.pqb',
+    'add_readings_file':      'Additional_Readings.txt',
+    'write_to_pleco_db':      True,
+    'output_pleco_database_file':   'bkrs.pqb',
     'from_word_number':       0,
     'to_word_number':         0, 
-    'approx_count_of_words':  2000000, #1835721
-    'log_to_console':         False,
     'log_file':               'log_file.txt',
     'bad_words_file':         'BKRS_bad_words.html',
+    'bad_words_list':         'bad_words.txt',
     'show_progress':          True,
     'get_pron_from_CEDICT':   True,
+    'approx_count_of_words':  2100000, #1835721
 }
 
 
@@ -44,26 +47,28 @@ class BKRS2Pleco(object):
         self.read_fab = ReadingFactory()
         self.cjk = characterlookup.CharacterLookup('T')
         self.pinyinOp = self.read_fab.createReadingOperator('Pinyin')
-        self.last_error = ''
-        self.last_error_info = ''
+        self.last_error = {'description':'', 'match':'', 'not_match': ''}
         self.bad_word_index = 0
         self.unihan_reading = {}
+        self.additional_reading = {}
+        self.hanzi_stat = {}
         self.approx_count_of_words = params['approx_count_of_words']
 
         self.log_file = open(self.params['log_file'], 'w', 1000)
         
     def export(self):
-        if self.params['write_to_db']:
-            self.conn = sqlite3.connect(self.params['output_database_file'])
+        if self.params['write_to_pleco_db']:
+            self.conn = sqlite3.connect(self.params['output_pleco_database_file'])
             self.cursor = self.conn.cursor()
         
         self.bad_words_file = open(self.params['bad_words_file'], 'w', 1000)
+        self.bad_words_list = open(self.params['bad_words_list'], 'w', 100)
+
         self.start_bad_words_file()
         
-
-        self.log('Start of export. Input: '+self.params['input_bkrs_file']+', output: '+self.params['output_database_file'])
+        self.log('Start of export. Input: '+self.params['input_bkrs_file']+', output: '+self.params['output_pleco_database_file'])
         self.start_time = time.time()
-        if self.params['write_to_db']:
+        if self.params['write_to_pleco_db']:
             self.create_db()
         self.dic = open(self.params['input_bkrs_file'], mode='r')
         line_type = ''
@@ -81,6 +86,7 @@ class BKRS2Pleco(object):
         no_pron_symbols_in_pinyin = 0
 
         self.load_readings_from_unihan()
+        self.load_additional_readings()
 
         for line in self.dic:
             if line == '\n':
@@ -115,6 +121,7 @@ class BKRS2Pleco(object):
 
                         if self.have_tone_number(pronounce):
                             pinyin_have_tone_number += 1
+                            self.log('Pinyin have tone number '+word_info)
                             continue
 
                         if self.have_tag_symbol(pronounce):
@@ -135,22 +142,22 @@ class BKRS2Pleco(object):
                             if not pronounce_numeric_tone:
                                 self.log('Error not found pronounce variant'+word_info)
                                 bad_word_not_found_pron_variant += 1
-                                if self.last_error != 'NO_PRON_VARIANTS':
-                                    self.log_bad_word(word, pronounce, 'Не совпадает', translate_with_tags, word_index)               
+                                if self.last_error['description'] != 'NO_PRON_VARIANTS':
+                                    self.log_bad_word(word, pronounce, 'Не совпадает', translate_with_tags, word_index)
+                                    self.bad_words_list.write(word.encode('utf-8')+'\t'+pronounce.encode('utf-8')+'\n')              
                                 continue
                         else:
                             no_pron_symbols_in_pinyin += 1
                             continue
 
-                        if self.params['write_to_db']:
+                        if self.params['write_to_pleco_db']:
                             self.write_db(word, pronounce_numeric_tone, translate)
                             self.create_db_word_index(ob_pronounce, len(word))
                         self.clear_last_error()
                         good_words += 1
 
 
-
-        self.log('OK..')
+        self.log('OK.. ###################################################################################')
         self.log('Count of words:\t\t\t\t\t'+str(word_index))
         self.log('Good words:\t\t\t\t\t\t'+str(good_words)+'\t\t('+str(round(float(good_words)*100/word_index,2))+'%)')
         self.log('Have no rus translate:\t\t\t'+str(have_no_rus_translate)+'\t\t('+str(round(float(have_no_rus_translate)*100/word_index,2))+'%)')
@@ -159,8 +166,9 @@ class BKRS2Pleco(object):
         self.log('Pinyin field have tone number:\t'+str(pinyin_have_tone_number)+'\t\t('+str(round(float(pinyin_have_tone_number)*100/word_index,2))+'%)')
         self.log('Pinyin pinyin have tag symbol:\t'+str(pinyin_have_tag_symbol)+'\t\t('+str(round(float(pinyin_have_tag_symbol)*100/word_index,2))+'%)')
         self.log('Pinyin have no pron symbols:  \t'+str(no_pron_symbols_in_pinyin)+'\t\t('+str(round(float(no_pron_symbols_in_pinyin)*100/word_index,2))+'%)')
+        self.log_hanzi_stat()
 
-        if self.params['write_to_db']:
+        if self.params['write_to_pleco_db']:
             self.create_db_index()
             self.conn.commit()
             self.conn.close()
@@ -170,11 +178,41 @@ class BKRS2Pleco(object):
         self.log('End of export. Total time: '+str(round(self.end_time - self.start_time ,2))+' sec')
         
         self.end_bad_words_file()
+        self.bad_words_list.close()
         self.bad_words_file.close()
 
     def __del__(self):
 
         self.log_file.close()
+
+    def log_hanzi_stat(self):
+
+        hanzilist = []
+        for key, val in self.hanzi_stat.items():
+            hanzilist.append(val)
+
+        uniquehanzi = len(hanzilist)
+        allhanzi = 0
+        for h in hanzilist:
+            allhanzi += h['count']
+
+        self.log('Hanzi statistic ################################################################################')
+        self.log('Total hanzi:  '+str(allhanzi))
+        self.log('Unique hanzi: '+str(uniquehanzi))
+        self.log('Top 100 error hanzi ############################################################################')
+        hanzilist.sort(key=lambda x: x['error'], reverse = True)
+        i = 0
+        for hanzi in hanzilist:
+            i += 1
+            self.log('Hanzi: '+hanzi['hanzi']+' \t Count: '+str(hanzi['count'])+'\t\tError: '+str(hanzi['error']), with_time = False)
+            if i>100:
+                break
+        self.log('Hanzi frequency ##################################################################################')
+        hanzilist.sort(key=lambda x: x['count'], reverse = True)
+        i = 0
+        for hanzi in hanzilist:
+            i += 1
+            self.log('Hanzi #'+str(i)+': '+hanzi['hanzi']+' \t Frequency: '+str(hanzi['count']), with_time = False)
 
     def get_string_pron(self, ob_pron): 
         """Get list of pron: [pron1,pron2]
@@ -201,9 +239,9 @@ class BKRS2Pleco(object):
             
         pinyins = pinyin.split(',')
 
-        if len(clean_hanzi) == 0: #
+        if len(clean_hanzi) == 0: 
             self.log('Error Hanzi word length is zero! Hanzi: '+hanziword+' clean Hanzi: '+clean_hanzi)
-            self.last_error = 'NOT_CHINESE_CHARS'
+            self.last_error['description'] = 'NOT_CHINESE_CHARS'
             return False
 
         if len(clean_hanzi) == 1:
@@ -227,7 +265,7 @@ class BKRS2Pleco(object):
             all_pron_variants = self.get_all_pron_variants(clean_hanzi)
             if not all_pron_variants:
                 self.log('cjklib 2 getReadingForCharacter() and CEDICT() return empty list for hanzi: '+clean_hanzi)
-                self.last_error = 'NO_PRON_VARIANTS'
+                self.last_error['description'] = 'NO_PRON_VARIANTS'
                 return False
             all_num_pron_variants = []
             for v in all_pron_variants:
@@ -237,13 +275,13 @@ class BKRS2Pleco(object):
 
         for hanzi in clean_hanzi:
             all_pron_variants = self.get_all_pron_variants(hanzi)
-            all_pron_variants_mixed = self.get_with_mixed_tones(all_pron_variants)
+            all_pron_variants_mixed = self.get_with_mixed_tones(all_pron_variants, hanzi)
             if not all_pron_variants_mixed:
                 if self.params['get_pron_from_CEDICT']:
                     self.log('cjklib getReadingForCharacter() and CEDICT() return empty list for hanzi: '+hanzi)
                 else:
                     self.log('cjklib getReadingForCharacter() return empty list for hanzi: '+hanzi)
-                self.last_error = 'NO_PRON_VARIANTS'
+                self.last_error['description'] = 'NO_PRON_VARIANTS'
                 return False
             not_found = True
             for pron_var in all_pron_variants_mixed: 
@@ -254,10 +292,12 @@ class BKRS2Pleco(object):
                     num_pinyin = num_pinyin+num_pron_var 
                     not_found = False
                     break
-            if not_found:        
-                pstr = ' '.join('['+h+':'+p+']' for h,p in ob_pronounce)
-                self.log('Not found pron for hanzi: '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+'] P1:'+old_pinyin+' P2:'+pinyin+' '+pstr)
-                self.last_error_info = pstr+' '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+']'
+            if not_found:   
+                self.hanzi_stat[hanzi]['error'] += 1     
+                matched_str = ' '.join('['+h+':'+p+']' for h,p in ob_pronounce)
+                self.log('Not found pron for hanzi: '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+'] P1:'+old_pinyin+' P2:'+pinyin+' '+matched_str)
+                self.last_error['match'] = matched_str
+                self.last_error['not_match'] = hanzi+' ['+ ' '.join(s for s in all_pron_variants)+']'
                 return False
 
         return ob_pronounce
@@ -265,14 +305,26 @@ class BKRS2Pleco(object):
     def get_all_pron_variants(self, hanzi, mixtones = True):
         pron_variants = []
         try:
-            pron_variants = self.cjk.getReadingForCharacter(hanzi, 'Pinyin')
+            pron_variants = pron_variants + self.additional_reading[hanzi]
+        except KeyError:
+            pass # Not in additional reading file
+
+        try:
+            pron_variants = pron_variants + self.cjk.getReadingForCharacter(hanzi, 'Pinyin')
         except:
             self.log('Error: getReadingForCharacter. Hanzi: '+hanzi)
-            return []
+
         try:
             pron_variants = pron_variants + self.unihan_reading[hanzi]
-        except:
-            pass #No in UNIHAN databese
+        except KeyError:
+            pass # Not in UNIHAN databese
+
+        try:
+            self.hanzi_stat[hanzi]['count'] += 1
+        except KeyError:
+            self.hanzi_stat[hanzi] = {'hanzi': hanzi, 'count':1, 'error':0}
+
+
 
         if not pron_variants:
             if self.params['get_pron_from_CEDICT']:
@@ -282,12 +334,18 @@ class BKRS2Pleco(object):
 
         unique_pron_vars = []
         for v in pron_variants:
-            if v not in unique_pron_vars:
-                unique_pron_vars.append(v)
+            if v.strip() not in unique_pron_vars:
+                unique_pron_vars.append(v.strip())
 
         return unique_pron_vars
 
-    def get_with_mixed_tones(self, pron_var_list):
+    def get_with_mixed_tones(self, pron_var_list, hanzi):
+        not_reverse_list = [u'亲']
+
+        if hanzi in not_reverse_list:
+            reverse = False
+        else:
+            reverse = True
 
         all_pron_variants = pron_var_list
    
@@ -303,13 +361,13 @@ class BKRS2Pleco(object):
         for v in all_pron_variants:
             if v not in all_unique_pron_variants:
                 all_unique_pron_variants.append(v)
-        all_unique_pron_variants.sort(key=len, reverse=True)
+        all_unique_pron_variants.sort(key=len, reverse = reverse)
 
         return all_unique_pron_variants
 
     def load_readings_from_unihan(self):
         self.log('Start loading UNIHAN reading database...')
-        unihanfile = open(self.params['unihan_file'])
+        unihanfile = open(self.params['unihan_file'], mode = 'r')
         words = 0
         for line in unihanfile:
             uline = line.decode('utf-8')
@@ -327,6 +385,21 @@ class BKRS2Pleco(object):
                 self.unihan_reading[charhanzi] = readings
                 words += 1
         self.log('UNIHAN reading database loaded. Count of hieroglyph: '+str(words))
+
+    def load_additional_readings(self):
+        self.log('Start loading additional reading database...')
+        addreadfile = open(self.params['add_readings_file'], mode = 'r')
+        words = 0
+        for line in addreadfile:
+            uline = (line[:-1]).strip().decode('utf-8')
+         
+            charhanzi = uline.split('\t')[0].strip()
+            readings = uline.split('\t')[1].split(',')
+        
+          
+            self.additional_reading[charhanzi] = readings
+            words += 1
+        self.log('Additional reading database loaded. Count of hieroglyph: '+str(words))
 
 
     def filter_hanzi(self, hanziword):
@@ -362,28 +435,24 @@ class BKRS2Pleco(object):
         pinyin = pinyin.replace(u'ĕ',u'ě')
         pinyin = pinyin.replace(u'ă',u'ǎ')
         pinyin = pinyin.replace(u'ĭ',u'ǐ')
-        #pinyin = pinyin.replace('','')
-        #pinyin = pinyin.replace('','')
-        #pinyin = pinyin.replace('','')
-
 
         if for_human_detect:
-            pinyin = re.sub(ur'([^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü,])','<b class="red">'+r'\1'+'</b>', pinyin)
+            pinyin = re.sub(ur'([^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü ,])','<b class="red">'+r'\1'+'</b>', pinyin)
         else:
-            pinyin = re.sub(ur'[^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü,]',' ', pinyin)
+            pinyin =  re.sub(ur'[^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü ,]',' ', pinyin)
         pinyin = re.sub(ur'[ ]*,[ ]*',',', pinyin)
         return pinyin.strip()
 
-    def log(self, message):
+    def log(self, message, with_time = True):
         message = message.encode('utf-8')
         con_time = time.strftime('%H:%M:%S')
         log_time = time.strftime('%b %d %Y %H:%M:%S')
+        if not with_time:
+            con_time = ''
+            log_time = ''
+
         if self.params['log_to_console']:
-            try:
-                print con_time+'    '+message
-            except:
-                print con_time+'    '+'Log to console error'
-       
+            print con_time+'    '+message
         self.log_file.write(log_time+'  '+message+'\n')
 
     def show_progress(self, cur_index, max_index):
@@ -399,7 +468,7 @@ class BKRS2Pleco(object):
             start_bold = self.PLC_START_BOLD
             stop_bold = self.PLC_STOP_BOLD
         else:
-            new_line = ' \n'
+            new_line = '\n'
             start_bold = ' '
             stop_bold = ' '
         string = re.sub('\[m[1-9]\]\[\*\]\[ex\]', new_line, string)
@@ -605,23 +674,34 @@ class BKRS2Pleco(object):
                 return True
         return False
 
+    def pinyin_not_have_bad_symbols(pinyin):
+        if pinyin.find('<b class="red">') != -1:
+            return 0
+        return 1
+
     def log_bad_word(self, word, pinyin, str_error, translate, word_index):
+
         self.bad_word_index += 1
         filtered_pinyin = self.filter_pinyin(pinyin, for_human_detect = True)
+        if filtered_pinyin.find('<b class="red">') != -1:
+            fpinyin_sort_field = '0'
+        else:
+            fpinyin_sort_field = '1'
+
         self.bad_words_file.write('<tr>\n')
-        self.bad_words_file.write('<td class="number"> #'+str(self.bad_word_index)+' #'+str(word_index)+' </td>\n')
+        self.bad_words_file.write('<td class="number">'+str(self.bad_word_index)+'#'+str(word_index)+'</td>\n')
         self.bad_words_file.write('\t<td class="error-info">'+str_error+'</td>\n')
         self.bad_words_file.write('\t<td class="word"><a target="_blank" href="http://bkrs.info/slovo.php?ch='+word.encode('utf-8')+'">'+word.encode('utf-8')+'</td>\n')
         self.bad_words_file.write('\t<td class="pinyin">'+pinyin.encode('utf-8')+'</td>\n')
-        self.bad_words_file.write('\t<td class="filtered-pinyin">'+filtered_pinyin.encode('utf-8')+'</td>\n')
-        self.bad_words_file.write('\t<td class="match">'+self.last_error_info.encode('utf-8')+'</td>\n')
+        self.bad_words_file.write('\t<td class="filtered-pinyin" sorttable_customkey="'+fpinyin_sort_field+'">'+filtered_pinyin.encode('utf-8')+'</td>\n')
+        self.bad_words_file.write('\t<td class="match">'+self.last_error['match'].encode('utf-8')+'</td>\n')
+        self.bad_words_file.write('\t<td class="not_match">'+self.last_error['not_match'].encode('utf-8')+'</td>\n')
         self.bad_words_file.write('\t<td class="translate">'+self.remove_html_tags(translate, use_pleco_features = False)[:50].encode('utf-8')+'</td>\n')
         self.bad_words_file.write('</tr>\n')
 
 
     def clear_last_error(self):
-        self.last_error = ''
-        self.last_error_info = ''
+        self.last_error = {'description':'', 'match':'', 'not_match': ''}
 
     def start_bad_words_file(self):
         starthtml = """<html>
@@ -637,13 +717,32 @@ class BKRS2Pleco(object):
         .pinyin{}
         .filtered-pinyin{}
         .match{}
-        .translate{width:25%; word-break: break-all;}
-        td{border: 1px solid #CCC; padding: 4px 10px;}
+        .translate{width:25%;}
+        td, th{border: 1px solid #CCC; padding: 4px 10px;}
+
+        /* Sortable tables */
+        table.sortable thead {
+        background-color:#eee;
+        color:#666666;
+        font-weight: bold;
+        cursor: default;
+        }
     </style>
+    <script src="sorttable.js"></script>
 </head>
 <body>
 <p class="title"> BKRS pinyin errors</p>
-<table class="etable" style="margin:0 auto; border-collapse: collapse; border-spacing: 0;" cellpadding="0" cellspacing="0">
+<table class="etable sortable" style="margin:0 auto; border-collapse: collapse; border-spacing: 0;" cellpadding="0" cellspacing="0">
+<tr>
+    <th class="sorttable_numeric">Number</th>
+    <th>Error</th>
+    <th>Hanzi</th>
+    <th>Pinyin</th>
+    <th>Corrected pinyin</th>
+    <th>Pinyin match</th>
+    <th>Pinyin Not match</th>
+    <th>Translate</th>
+</tr>
         """
         self.bad_words_file.write(starthtml)
 
