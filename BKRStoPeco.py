@@ -85,8 +85,11 @@ class BKRS2Pleco(object):
         num_pinyin_have_tone_mark = 0
         no_pron_symbols_in_pinyin = 0
 
-        self.load_readings_from_unihan()
-        self.load_additional_readings()
+        if self.params['unihan_file']:
+            self.load_readings_from_unihan()
+
+        if self.params['add_readings_file']:
+            self.load_additional_readings()
 
         for line in self.dic:
             if line == '\n':
