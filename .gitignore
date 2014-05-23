@@ -5,3 +5,4 @@
 *.bat
 *.pqb-journal
 *.lnk
+*.sqlite
