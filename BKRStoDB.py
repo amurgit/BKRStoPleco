@@ -37,6 +37,7 @@ params = {
 }
 
 
+
 class BKRS2DB(object):
 
     """Class to convert BKRS.info dictionary into Pleco database format"""
