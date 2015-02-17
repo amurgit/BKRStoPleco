@@ -5,6 +5,7 @@ output_files*
 *.db
 *.sql
 *.bat
+*.pyc
 *.db-journal
 *.pqb-journal
 *.lnk
