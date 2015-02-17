@@ -2,6 +2,7 @@
 import re
 import sqlite3
 import time
+import sys
 
 class Pleco(object):
     def __init__(self, output_db_file, parent):
@@ -35,20 +36,29 @@ class Pleco(object):
         self.TAG_STOP_LINK = '\xEE\xAA\xBB'.decode('utf-8')
 
     def remove_html_tags(self, string):
+   
+        string = re.sub(ur'\[b\](.+?)\[/b\]', self.TAG_START_BOLD+r'\1'+self.TAG_STOP_BOLD, string)
+        string = re.sub(self.TAG_START_BOLD+'(I|V|X)', self.TAG_NEW_LINE*2+self.TAG_START_BOLD+ur'\1', string)
+
         string = re.sub(r'\[m[1-9]\]\[\*\]\[ex\]', self.TAG_NEW_LINE, string)
         string = re.sub(r'\[(ex|e)\]', self.TAG_NEW_LINE, string)
         string = re.sub(r'\[m2\]', self.TAG_NEW_LINE*2, string)
         string = re.sub(r'\[m[3-9]\]', self.TAG_NEW_LINE, string)
-        
+
         string = string.replace('\]',']')
         string = string.replace('\[','[')
         string = re.sub(self.TAG_NEW_LINE+r'([0-9]+\))', self.TAG_NEW_LINE+self.TAG_START_BOLD+r'\1'+self.TAG_STOP_BOLD, string)
         string = string.replace('\ ',' ')
         string = string.replace('*',' ')
+
+
         string = re.sub(r'\[[a-zA-Z0-9/ ]+\]', ' ', string)
         string = re.sub(r'[ ]+', ' ', string)
+        string = re.sub(r'^[ ]+([^ ].+?)$', r'\1', string)
+        
         string = re.sub(r'[ ]+'+self.TAG_NEW_LINE, self.TAG_NEW_LINE, string)
-        string = re.sub(self.TAG_NEW_LINE+r'[ ]+', self.TAG_NEW_LINE, string)
+        string = re.sub('^['+self.TAG_NEW_LINE+']+', self.TAG_NEW_LINE, string)
+        string = re.sub(self.TAG_NEW_LINE+r'[ ]+?', self.TAG_NEW_LINE, string)
 
         return string
 
@@ -96,14 +106,14 @@ class Pleco(object):
         self.cursor.execute('CREATE TABLE "pleco_dict_posdex_py_4" ("syllable" TEXT COLLATE NOCASE, "uid" INTEGER);')
         self.conn.commit()
 
-    def write_db(self, word, pronounce, translate):
+    def write_db(self, word, trad_word, pronounce, translate):
         ctime = str(int(time.time()))
         wordlen = len(word)
         translate = translate
         first_pron = pronounce.split(',')[0]
         sortindex = first_pron+word
         try:
-            self.cursor.execute('INSERT INTO pleco_dict_entries VALUES (NULL,?,?,?,?,NULL,?,?,?)', (ctime, ctime, wordlen, word, pronounce, translate, sortindex))
+            self.cursor.execute('INSERT INTO pleco_dict_entries VALUES (NULL,?,?,?,?,?,?,?,?)', (ctime, ctime, wordlen, word, trad_word, pronounce, translate, sortindex))
             self.db_last_insert_id = self.cursor.lastrowid
         except:
             self.parent.log('DB Error: '+str(sys.exc_info()[0])+' word: '+word)
@@ -117,7 +127,7 @@ class Pleco(object):
         list_pron = []
         for pron in ob_pron:
             i = 0
-            for hanzi, num_pinyin in pron:
+            for hanzi, num_pinyin, sep in pron:
                 i += 1
                 if i == 1:
                     self.cursor.execute('INSERT INTO pleco_dict_posdex_hz_1 VALUES(?,?,?)',(hanzi, self.db_last_insert_id, wordlen))
