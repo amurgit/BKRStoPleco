@@ -1,8 +1,11 @@
-*.html
+output_files*
+*bkrs_last.txt
+*.zip
 *.pqb
-*.txt
+*.db
 *.sql
 *.bat
+*.db-journal
 *.pqb-journal
 *.lnk
 *.sqlite

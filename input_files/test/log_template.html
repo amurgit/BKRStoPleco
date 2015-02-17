@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head> 
+    <meta charset="utf-8"/>
+    <title>BKRS pinyin errors</title>
+    <style>
+        .title{font-size: 24px;}
+        .etable{border: 1px solid #CCCCCC; width: 99%;}
+        .red{color: #FF0000;}
+        .error-info{font-size: 12px; width: 70px;}
+        .word{}
+        .pinyin{}
+        .filtered-pinyin{}
+        .match{}
+        .translate{width:25%;}
+        td, th{border: 1px solid #CCC; padding: 4px 10px;}
+
+        /* Sortable tables */
+        table.sortable thead {
+        background-color:#eee;
+        color:#666666;
+        font-weight: bold;
+        cursor: default;
+        }
+    </style>
+    <script src="../sorttable.js"></script>
+    <script src="../jquery.min.js"></script>
+    <script type="text/javascript">
+    $(document).ready(function(){
+        // $('#hide_alpha').click(function(){
+        //     if ($(this).attr()) 
+        //     {
+        //         $('.pinyin').hide()
+        //     }else{
+        //         $('.pinyin').show()
+        //     }
+        // })
+    })
+    </script>
+</head>
+<body>
+    <p class="title"> BKRS pinyin errors</p>
+    <label><input id="hide_alpha" type="checkbox"> Hide have alpha symbols</label><br>
+    <label><input id="hide_numpinyin" type="checkbox"> Hide have 0-9 in pinyin symbols</label><br>
+    <table class="etable sortable" style="margin:0 auto; border-collapse: collapse; border-spacing: 0;" cellpadding="0" cellspacing="0">
+    <tr>
+        <th class="sorttable_numeric">Number</th>
+        <th>Error</th>
+        <th>Hanzi</th>
+        <th>Pinyin</th>
+        <th>Corrected pinyin</th>
+        <th>Pinyin match</th>
+        <th>Pinyin Not match</th>
+        <th>Freq</th>
+        <th>Translate</th>
+    </tr>

@@ -1,0 +1,29 @@
+
+希腊字母读法  
+Αα：阿尔法 Alpha  
+Ββ：贝塔 Beta  
+Γγ：伽玛 Gamma  
+Δδ：德尔塔 Delte  
+Εε：艾普西龙 Epsilon  
+ζ ：捷塔 Zeta  
+Ζη：依塔 Eta  
+Θθ：西塔 Theta  
+Ιι：艾欧塔 Iota  
+Κκ：喀帕 Kappa  
+∧λ：拉姆达 Lambda  
+Μμ：缪 Mu  
+Νν：拗 Nu  
+Ξξ：克西 Xi  
+Οο：欧麦克轮 Omicron  
+∏π：派 Pi  
+Ρρ：柔 Rho  
+∑σ：西格玛 Sigma  
+Ττ：套 Tau  
+Υυ：宇普西龙 Upsilon  
+Φφ：fai Phi  
+Χχ：器 Chi  
+Ψψ：普赛 Psi  
+Ωω：欧米伽 Omega
+
+DB Error: <class 'sqlite3.IntegrityError'> word: 鱥 u'巴戛鱼岁' u'巴戛鱥'
+
