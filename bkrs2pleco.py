@@ -95,7 +95,7 @@ class BKRS2DB(object):
                         if self.params['show_progress']:
                             self.show_progress(word_index, self.params['to_word_number'])
                         word = (line[:-1]).strip().decode('utf-8')
-                        word = self.join_nonprintable_hanzi(word) # 鱼岁 = 鱥
+                        #word = self.join_nonprintable_hanzi(word) # 鱼岁 = 鱥
                         line_type = 'pronounce'
                     elif line_type == 'pronounce':
                         pronounce = (line[1:-1]).strip().decode('utf-8')
@@ -143,12 +143,13 @@ class BKRS2DB(object):
                             if not pronounce_numeric_tone:
                                 self.log('Error not found pronounce variant'+word_info)
                                 bad_word_not_found_pron_variant += 1
-                                if self.last_error['description'] != 'NOT_MATCH':
-                                    if self.have_lat_letters_or_numbers(word):
-                                        self.log_bad_word(word, pronounce, 'word_have_alpha_symbol', translate_with_tags, word_index)
-                                    else:
-                                        self.log_bad_word(word, pronounce, 'pinyin_not_match', translate_with_tags, word_index)
-                                    self.bad_words_list.write(word.encode('utf-8')+'\t'+pronounce.encode('utf-8')+'\n')              
+                                if self.last_error['description'] != 'HANZI_WITH_NO_PRON':
+                                    if self.translate_have_rus(translate_with_tags):
+                                        if self.have_lat_letters_or_numbers(word):
+                                            self.log_bad_word(word, pronounce, 'word_have_alpha_symbol', translate_with_tags, word_index)
+                                        else:
+                                            self.log_bad_word(word, pronounce, 'pinyin_not_match', translate_with_tags, word_index)
+                                        self.bad_words_list.write(word.encode('utf-8')+'\t'+pronounce.encode('utf-8')+'\n')              
                                 continue
                         else:
                             no_pron_symbols_in_pinyin += 1
@@ -321,7 +322,7 @@ class BKRS2DB(object):
                     self.log('cjklib getReadingForCharacter() and CEDICT() return empty list for hanzi: '+hanzi)
                 else:
                     self.log('cjklib getReadingForCharacter() return empty list for hanzi: '+hanzi)
-                self.last_error['description'] = 'NOT_MATCH'
+                self.last_error['description'] = 'HANZI_WITH_NO_PRON'
                 try:
                     self.bad_hanzi_list.write(hanzi.encode('utf-8')+'\n')
                 except:
@@ -336,11 +337,11 @@ class BKRS2DB(object):
                     else: 
                         sep = ''
                     pinyin = pinyin.strip()
-                    if not self.have_tone_mark(pron_var) and re.match('^[a-zA-Z]$',hanzi):
+                    if not self.have_tone_mark(pron_var) and re.match(u'^[a-zA-Zα-ωΑ-Ω]$',hanzi):
                         num_pron_var = pron_var
                     else:
                         num_pron_var = self.get_numeric_tone(pron_var)
-                    ob_pronounce.append((hanzi,num_pron_var,sep))
+                    ob_pronounce.append((hanzi, num_pron_var, sep))
                     num_pinyin = num_pinyin+num_pron_var 
                     not_found = False
                     break
@@ -462,7 +463,7 @@ class BKRS2DB(object):
         #{InCJK_Compatibility_Forms}: U+FE30–U+FE4F 
 
         clean_word = ''
-        for char in re.findall(ur'[0-9a-zA-Z\u3300-\u33FF\u3400-\u4DBF\u4e00-\u9fff\uF900-\uFAFF\uFE30-\uFE4F]+', hanziword):
+        for char in re.findall(ur'[0-9a-zA-Zα-ωΑ-Ω\u3300-\u33FF\u3400-\u4DBF\u4e00-\u9fff\uF900-\uFAFF\uFE30-\uFE4F]+', hanziword):
             clean_word = clean_word+char
         clean_word = self.replace_comma(clean_word, rep = '')
         return clean_word
@@ -524,7 +525,8 @@ class BKRS2DB(object):
         pinyin = pinyin.replace(u'​', ' ') # non visible symbol!
         pinyin = pinyin.replace(u'·', ' ') 
         pinyin = pinyin.replace(u'\\', ' ') 
-        pinyin = re.sub(u'[‘　’`….‧—–/:-]+', ' ', pinyin)
+        #pinyin = re.sub(u'[‘　’`….‧—–/:-]+', ' ', pinyin)
+        pinyin = re.sub(u'[‘　`….‧—–/:-]+', ' ', pinyin)
         pinyin = re.sub('[ ]+',' ', pinyin)
         pinyin = re.sub(',[ ,]*,',',', pinyin)
         pinyin = re.sub('[ ]*[,]+[ ]*',',', pinyin)
@@ -637,6 +639,16 @@ class BKRS2DB(object):
         string = re.sub('\[[a-z0-9]+\][^\[]*\[/[a-z0-9]+\]', rep, string) #delete tags level 2
         string = re.sub('\[[a-z0-9]+\][^\[]*\[/[a-z0-9]+\]', rep, string) #delete tags level 3
         return string
+
+    def replace_cp_tags_with_content(self, string, rep = ''):
+        string = re.sub('\[[cp]\][^\[]*\[/[cp]\]', rep, string) #delete tags level 1
+        string = re.sub('\[[cp]\][^\[]*\[/[cp]\]', rep, string) #delete tags level 1
+        string = re.sub('\[[cp]\][^\[]*\[/[cp]\]', rep, string) #delete tags level 1
+        return string
+
+    def translate_have_rus(self, translate):
+        tr = self.replace_cp_tags_with_content(translate)
+        return self.have_rus_letters(tr)
 
     def have_number_symbol(self, pron):
         numsim = u'1234567890'
