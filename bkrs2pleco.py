@@ -14,6 +14,20 @@ from pleco import Pleco
 import ConfigParser
 import statprof
 
+
+def unique_list(seq, idfun=None): 
+   # order preserving
+    if idfun is None:
+        def idfun(x): return x
+    seen = {}
+    result = []
+    for item in seq:
+        marker = idfun(item)
+        if marker in seen: continue
+        seen[marker] = 1
+        result.append(marker)
+    return result
+
 class BKRS2DB(object):
 
     """Class to convert BKRS.info dictionary into Pleco database format"""
@@ -28,6 +42,7 @@ class BKRS2DB(object):
         self.buffer_index = 0
 
         self.read_fab = ReadingFactory()
+        self.cedict = CEDICT()
         self.cjk = characterlookup.CharacterLookup('T')
         self.pinyinOp = self.read_fab.createReadingOperator('Pinyin')
         self.charInfo =  cjknife.CharacterInfo()
@@ -36,8 +51,10 @@ class BKRS2DB(object):
         self.additional_reading = {}
         self.hanzi_stat = {}
         self.hanzi_freq = {}
+        self.hanzi_pron_var = {}
         self.errors_description = {
             'pinyin_not_match':'Не совпадает', 
+            'no_pinyin':'Нет чтения',
             'pinyin_have_tag_symbol':'В пиньине теги', 
             'pinyin_have_bad_symbol':'В пиньине плохие символы', 
             'pinyin_have_rus_letter':'В пиньине русские буквы',
@@ -48,6 +65,7 @@ class BKRS2DB(object):
         self.log_file = open(self.params['log_file'], 'w', 1000)
         if self.params['write_to_pleco_db']:
             self.pleco = Pleco(self.params['output_pleco_database_file'], self)
+        self.bad_hanzi_list = False
         
     def export(self):
         if self.params['write_to_db']:
@@ -95,6 +113,7 @@ class BKRS2DB(object):
                         if self.params['show_progress']:
                             self.show_progress(word_index, self.params['to_word_number'])
                         word = (line[:-1]).strip().decode('utf-8')
+                        self.stat_words_hanzi(word)
                         #word = self.join_nonprintable_hanzi(word) # 鱼岁 = 鱥
                         line_type = 'pronounce'
                     elif line_type == 'pronounce':
@@ -152,6 +171,8 @@ class BKRS2DB(object):
                                         self.bad_words_list.write(word.encode('utf-8')+'\t'+pronounce.encode('utf-8')+'\n')              
                                 continue
                         else:
+                            #if self.translate_have_rus(translate_with_tags):
+                            #    self.log_bad_word(word, pronounce, 'no_pinyin', translate_with_tags, word_index)
                             no_pron_symbols_in_pinyin += 1
                             continue
 
@@ -212,12 +233,12 @@ class BKRS2DB(object):
 
         self.params = {}
         self.params['write_to_db'] =            self.config.getboolean('Main', 'write_to_db')
-        self.params['get_pron_from_CEDICT'] =   self.config.getboolean('Main', 'get_pron_from_CEDICT')
         self.params['write_to_pleco_db'] =      self.config.getboolean('Main', 'write_to_pleco_db')
         self.params['show_progress'] =          self.config.getboolean('Main', 'show_progress')
         self.params['approx_count_of_words'] =  self.config.getint('Main', 'approx_count_of_words')
         self.params['from_word_number'] =       self.config.getint('Main', 'from_word_number')
         self.params['to_word_number'] =         self.config.getint('Main', 'to_word_number')
+        self.params['log_console'] =  False
 
         self.params['input_bkrs_file'] =        self.config.get('Input files', 'bkrs_db')
         self.params['additional_pronounces_file'] = self.config.get('Input files', 'additional_pronounces')
@@ -257,12 +278,9 @@ class BKRS2DB(object):
                 break
         self.log('Hanzi frequency ##################################################################################')
         hanzilist.sort(key=lambda x: x['count'], reverse = True)
-        i = 0
+
         for hanzi in hanzilist:
             frequency_file.write(hanzi['hanzi'].encode('utf-8')+'\t'+str(hanzi['count'])+'\n')
-            i += 1
-            if i<100:
-                self.log('Hanzi #'+str(i)+': '+hanzi['hanzi']+' \t Frequency: '+str(hanzi['count']), with_time = False)
             
         frequency_file.close()
 
@@ -304,49 +322,33 @@ class BKRS2DB(object):
                 pron = self.convert_pinyin(clean_hanzi, atom_pinyin, reverse_sort = False)
             if pron:
                 pinyins_good_results.append(pron)
+
+
         return pinyins_good_results
 
     def convert_pinyin(self, clean_hanzi, pinyin, reverse_sort = True):        
         old_pinyin = pinyin
         ob_pronounce = []
-        num_pinyin = ''
-
         for hanzi in clean_hanzi:
-            all_pron_variants = self.get_all_pron_variants(hanzi)
-            if re.match('^[0-9]$',hanzi):
-                all_pron_variants_mixed = all_pron_variants
-            else:
-                all_pron_variants_mixed = self.get_with_mixed_tones(all_pron_variants, reverse_sort)
-            if not all_pron_variants_mixed:
-                if self.params['get_pron_from_CEDICT']:
-                    self.log('cjklib getReadingForCharacter() and CEDICT() return empty list for hanzi: '+hanzi)
-                else:
-                    self.log('cjklib getReadingForCharacter() return empty list for hanzi: '+hanzi)
+            all_pron_variants = self.get_pron_variants(hanzi)
+            all_pron_variants_mixed = self.get_pron_variants_mixed(hanzi, reverse_sort)
+            not_found_pron = True
+            if not all_pron_variants:
+                self.log('No fonded any pronounciation for hanzi: '+hanzi)
                 self.last_error['description'] = 'HANZI_WITH_NO_PRON'
-                try:
+                self.last_error['hanzi'] = hanzi
+                if self.bad_hanzi_list: 
                     self.bad_hanzi_list.write(hanzi.encode('utf-8')+'\n')
-                except:
-                    pass
                 return False
-            not_found = True
-            for pron_var in all_pron_variants_mixed: 
+            for pron_var in all_pron_variants_mixed:
                 if pinyin.startswith(pron_var):
-                    pinyin = pinyin.replace(pron_var, '', 1)
-                    if pinyin.startswith(' '): 
-                        sep = ' '
-                    else: 
-                        sep = ''
-                    pinyin = pinyin.strip()
-                    if not self.have_tone_mark(pron_var) and re.match(u'^[a-zA-Zα-ωΑ-Ω]$',hanzi):
-                        num_pron_var = pron_var
-                    else:
-                        num_pron_var = self.get_numeric_tone(pron_var)
-                    ob_pronounce.append((hanzi, num_pron_var, sep))
-                    num_pinyin = num_pinyin+num_pron_var 
-                    not_found = False
+                    not_found_pron = False
+                    pinyin_splited = self.split_pinyin(hanzi, pron_var, pinyin)
+                    pinyin = pinyin_splited['pinyin']
+                    ob_pronounce.append((hanzi, pinyin_splited['num_pron'], pinyin_splited['sep']))
                     break
-            if not_found:   
-                self.hanzi_stat[hanzi]['error'] += 1     
+            if not_found_pron: 
+                self.stat_add_hanzi_error(hanzi)
                 matched_str = ' '.join('['+h+':'+p+']' for h,p,s in ob_pronounce)
                 self.log('Not found pron for hanzi: '+hanzi+' ['+ ' '.join(s for s in all_pron_variants)+'] P1:'+old_pinyin+' P2:'+pinyin+' '+matched_str)
                 self.last_error['match'] = matched_str
@@ -355,73 +357,94 @@ class BKRS2DB(object):
 
         return ob_pronounce
 
-    def get_all_pron_variants(self, hanzi):
-        pron_variants = []
-        try:
-            pron_variants = pron_variants + self.additional_reading[hanzi]
-        except KeyError:
-            pass # Not in additional reading file
 
+    def split_pinyin(self, hanzi, pron_var, pinyin):
+        all_separators = [u' ', u'’']
+        pinyin = pinyin.replace(pron_var, '', 1)
+        separator = ''
+        for sep in all_separators:
+            if pinyin.startswith(sep): 
+                pinyin = pinyin.lstrip(sep)
+                separator = sep
+                break
+        if not self.have_tone_mark(pron_var) and re.match(u'^[a-zA-Zα-ωΑ-Ω]$',hanzi):
+            num_pron = pron_var
+        else:
+            num_pron = self.get_numeric_tone(pron_var)
+        return {'num_pron':num_pron,'sep':separator, 'pinyin':pinyin}
+
+    def get_pron_variants_mixed(self, hanzi, reverse_sort):
+        all_pron_variants = self.get_pron_variants(hanzi)
+        if re.match('^[0-9]$',hanzi):
+            pron_variants = all_pron_variants
+        else:
+            pron_variants = self.get_with_mixed_tones(all_pron_variants, reverse_sort)
+        return pron_variants
+
+    def get_pron_variants(self, hanzi):
+        if hanzi in self.hanzi_pron_var:
+            return self.hanzi_pron_var[hanzi]
+
+        pron_variants = []
         try:
             pron_variants = pron_variants + self.cjk.getReadingForCharacter(hanzi, 'Pinyin')
         except:
             self.log('Error: getReadingForCharacter. Hanzi: '+hanzi)
+        if hanzi in self.additional_reading:
+            pron_variants = pron_variants + self.additional_reading[hanzi]
 
-        try:
+        unique_pron_vars = unique_list(pron_variants, lambda x: x.lower().strip())
+        self.hanzi_pron_var[hanzi] = unique_pron_vars
+        return unique_pron_vars
+
+    def stat_add_hanzi(self, hanzi):
+        if hanzi in self.hanzi_stat:
             self.hanzi_stat[hanzi]['count'] += 1
-        except KeyError:
+        else:
             self.hanzi_stat[hanzi] = {'hanzi': hanzi, 'count':1, 'error':0}
 
-        if not pron_variants:
-            if self.params['get_pron_from_CEDICT']:
-                pron_variants = self.get_cedict_pron_variants(hanzi)
-        if not pron_variants:
-            return []
+    def stat_add_hanzi_error(self, hanzi):
+        if hanzi in self.hanzi_stat:
+            self.hanzi_stat[hanzi]['error'] += 1
+        else:
+            self.hanzi_stat[hanzi] = {'hanzi': hanzi, 'count':1, 'error':1}
 
-        unique_pron_vars = []
-        for v in pron_variants:
-            if v.strip() not in unique_pron_vars:
-                unique_pron_vars.append(v.strip())
-
-        return unique_pron_vars
+    def stat_words_hanzi(self, word):
+        for hanzi in word:
+            self.stat_add_hanzi(hanzi)
 
     def get_with_mixed_tones(self, pron_var_list, reverse_sort = True):
 
-        all_pron_variants = pron_var_list
-   
+        mixed_pron_variants = pron_var_list
         for pron_var in pron_var_list:
             none_tone_pron = self.get_without_tone_mark(pron_var)
             alltones = self.get_all_tones(none_tone_pron)
-            all_pron_variants = all_pron_variants+alltones
-        for pron_var in pron_var_list:  
-            none_tone_pron = self.get_without_tone_mark(pron_var)
-            all_pron_variants.append(none_tone_pron)
-
-        all_unique_pron_variants = []
-        for v in all_pron_variants:
-            if v not in all_unique_pron_variants:
-                all_unique_pron_variants.append(v)
-        all_unique_pron_variants.sort(key=len, reverse = reverse_sort)
-
-        return all_unique_pron_variants
+            alltones.append(none_tone_pron)
+            mixed_pron_variants = mixed_pron_variants+alltones
+        mixed_pron_variants = unique_list(mixed_pron_variants)
+        mixed_pron_variants.sort(key=len, reverse = reverse_sort)
+        return mixed_pron_variants
 
 
     def load_additional_pronounces(self):
         self.flog('Start loading additional reading database...')
-        addreadfile = open(self.params['additional_pronounces_file'], mode = 'r')
-        words = 0
-        for line in addreadfile:
-            line = line.replace('﻿','') # replace one not printable symbol
-            uline = line.strip().decode('utf-8')
-            charhanzilist = uline.split('\t')[0].strip().split(',')
-            readings = uline.split('\t')[1].split(',')
-            for charhanzi in charhanzilist:
-                if charhanzi in self.additional_reading:
-                    self.additional_reading[charhanzi] += readings
-                else:
-                    self.additional_reading[charhanzi] = readings
-                words += 1
-        self.flog('Additional reading database loaded. Count of hieroglyph: '+str(words))
+        files = self.params['additional_pronounces_file'].split(',')
+        for file_name in files:
+            addreadfile = open(file_name, mode = 'r')
+            words = 0
+            for line in addreadfile:
+                line = line.replace('﻿','') # replace one not printable symbol
+                uline = line.strip().decode('utf-8')
+                charhanzilist = uline.split('\t')[0].strip().split(',')
+                readings = uline.split('\t')[1].split(',')
+                for charhanzi in charhanzilist:
+                    if charhanzi in self.additional_reading:
+                        self.additional_reading[charhanzi] = unique_list(readings + self.additional_reading[charhanzi], lambda x: x.lower())
+                    else:
+                        self.additional_reading[charhanzi] = readings
+                    words += 1
+            addreadfile.close()
+            self.flog('Additional reading database loaded from '+file_name+'. Count of hieroglyph: '+str(words))
 
     def load_character_frequency(self):
         self.flog('Start loading character frequency...')
@@ -429,12 +452,13 @@ class BKRS2DB(object):
         words = 0
         for line in freqfile:
             uline = (line[:-1]).strip().decode('utf-8')
-            charhanzi = uline.split('\t')[0].strip()
-            freq = int(uline.split('\t')[1])
-            if freq <= 0:
-                freq = 1
-            self.hanzi_freq[charhanzi] = freq
-            words += 1
+            if '\t' in uline:
+                charhanzi = uline.split('\t')[0].strip()
+                freq = int(uline.split('\t')[1])
+                if freq <= 0:
+                    freq = 1
+                self.hanzi_freq[charhanzi] = freq
+                words += 1
         self.flog('Characters frequency loaded. Hanzi count: '+str(words))
 
     def get_hanzi_freq(self, hanzi):
@@ -513,7 +537,7 @@ class BKRS2DB(object):
         return word
 
     def pinyin_highlight_bad_sybmols(self, pinyin):
-        pinyin = re.sub(ur'([^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü ,]+)','<b class="red">('+r'\1'+')</b>', pinyin)
+        pinyin = re.sub(ur'([^a-zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜü ,’]+)','<b class="red">('+r'\1'+')</b>', pinyin)
         return pinyin
 
     def filter_pinyin(self, pinyin):
@@ -522,6 +546,10 @@ class BKRS2DB(object):
         pinyin = self.replace_tags_with_content(pinyin, ',')
         pinyin = re.sub('[;,]+', ',', pinyin)
         pinyin = re.sub('[,]+', ',', pinyin)
+
+
+        pinyin = pinyin.replace(u'в yдвoeнии тakжe​', ' ')
+        pinyin = pinyin.replace(u'в имeнax людeй читaeтcя', ' ')
         pinyin = pinyin.replace(u'​', ' ') # non visible symbol!
         pinyin = pinyin.replace(u'·', ' ') 
         pinyin = pinyin.replace(u'\\', ' ') 
@@ -536,20 +564,23 @@ class BKRS2DB(object):
         pinyin = pinyin.replace(u'ĕ',u'ě')
         pinyin = pinyin.replace(u'ă',u'ǎ')
         pinyin = pinyin.replace(u'ĭ',u'ǐ')
+        pinyin = pinyin.replace(u'ŏ',u'ǒ')
         return pinyin
 
-    def log(self, message, with_time = True):
+    def log(self, message, with_time = True, console = False):
         message = message.encode('utf-8')
         con_time = time.strftime('%H:%M:%S')
         log_time = time.strftime('%b %d %Y %H:%M:%S')
         if not with_time:
             con_time = ''
             log_time = ''
-
         self.log_file.write(log_time+'  '+message+'\n')
+        if console:
+            print log_time+'  '+message
 
     def flog(self, message):
-        self.log(message, with_time = True)
+        lc = self.params['log_console']
+        self.log(message, with_time = True, console = lc)
 
     def show_progress(self, cur_index, max_index):
         if max_index <= 0:
@@ -558,6 +589,9 @@ class BKRS2DB(object):
             return
         if cur_index%(int(max_index/100)) == 0:
             self.flog('Working... '+str(cur_index*100/max_index)+'%')
+            print 'Working... '+str(cur_index*100/max_index)+'%'
+
+
         
     def create_db(self):
         self.log('Create db')
@@ -620,6 +654,10 @@ class BKRS2DB(object):
         num_pron = self.read_fab.convert(entity, 'Pinyin', 'Pinyin', targetOptions={'toneMarkType': 'numbers'})
         return num_pron
 
+    def get_with_tone_mark(self, entity):
+        num_pron = self.read_fab.convert(entity, 'Pinyin', 'Pinyin', sourceOptions={'toneMarkType': 'numbers'},targetOptions={'toneMarkType': 'diacritics'})
+        return num_pron
+
     def have_tone_mark(self, pron):
         tonemarksymbols = u'āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ'
         for char in pron:
@@ -658,17 +696,16 @@ class BKRS2DB(object):
         return False
 
     def get_cedict_pron_variants(self, hanzi):
-        pron_vars = []
-        cedict = CEDICT()
-        for entrie in cedict.getFor(hanzi):
+        pron_vars = []        
+        for entrie in self.cedict.getFor(hanzi):
             pron_vars.append(entrie.Reading)
-        return pron_vars
+        return unique_list(pron_vars)
 
     def log_bad_word(self, word, pinyin, str_error, translate, word_index):
         self.bad_word_index += 1
         highlighted_word = self.word_highlight_bad_sybmols(word)
         highlighted_pinyin = self.pinyin_highlight_bad_sybmols(pinyin)
-        if highlighted_pinyin.find('<b class="red">') != -1:
+        if  '<b class="red">' in highlighted_pinyin:
             fpinyin_sort_field = '0'
         else:
             fpinyin_sort_field = '1'
@@ -702,5 +739,3 @@ class BKRS2DB(object):
         self.bad_words_file.write(endhtml)
 
 ##############################################################################################################
-#b = BKRS2DB(configfile = 'input_files/config.ini')
-#b.export()
