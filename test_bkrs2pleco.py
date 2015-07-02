@@ -7,16 +7,13 @@ class TestBKRS2DB (unittest.TestCase):
 
 	@classmethod
 	def setUpClass(self):
+		#self.bkrs = BKRS2DB(configfile = 'input_files/config.ini')
 		self.bkrs = BKRS2DB(configfile = 'input_files/test/config.ini')
 		self.bkrs.load_additional_pronounces()
 		self.bkrs.load_character_frequency()
 
 	def test_join_nonprintable_hanzi(self):
 		self.assertEqual(self.bkrs.join_nonprintable_hanzi(u'巴戛鱼岁'), u'巴戛鱥')
-
-	def test_get_all_pron_variants(self):
-		self.assertEqual(self.bkrs.get_all_pron_variants(u'戛'), [u'gā', u'jiá'])
-		self.assertEqual(self.bkrs.get_all_pron_variants(u'齐'), [u'zhāi',u'jì', u'qí'])
 
 	def test_get_hanzi_freq(self):
 		self.assertGreater(self.bkrs.get_hanzi_freq(u'学'), 3949)
@@ -47,6 +44,7 @@ class TestBKRS2DB (unittest.TestCase):
 		self.assertEqual(self.bkrs.pinyin_highlight_bad_sybmols(u'bù mǎn 18 zhōusuì de rén'), u'bù mǎn <b class="red">(18)</b> zhōusuì de rén')
 		self.assertEqual(self.bkrs.pinyin_highlight_bad_sybmols(u'tuō‧huá'), u'tuō<b class="red">(‧)</b>huá')
 		self.assertEqual(self.bkrs.pinyin_highlight_bad_sybmols(u'	abc fēnxī'), u'<b class="red">(	)</b>abc fēnxī')
+		self.assertEqual(self.bkrs.pinyin_highlight_bad_sybmols(u'ā’ěrtàishān'), u'ā’ěrtàishān')
 
 	def test_word_highlight_bad_sybmols(self):
 		self.assertEqual(self.bkrs.word_highlight_bad_sybmols(u'Ｑ开关激光器'), u'<b class="red">(Ｑ)</b>开关激光器')
@@ -74,12 +72,24 @@ class TestBKRS2DB (unittest.TestCase):
 		self.assertEqual(self.bkrs.replace_comma(u'学习'), u'学习')
 		self.assertEqual(self.bkrs.replace_comma(u'tuō‧huá'), u'tuō‧huá')
 		self.assertEqual(self.bkrs.replace_comma(u'sān,wú', ' '), u'sān wú')
+		self.assertEqual(self.bkrs.replace_comma(u'ā’ěrtàishān', ' '), u'ā’ěrtàishān')
 
-	def test_get_all_pron_variants(self):
-		self.assertEqual(self.bkrs.get_all_pron_variants(u'3'),[u'sān', '3'])
-		self.assertEqual(self.bkrs.get_all_pron_variants(u'2'),[u'èr',u'liǎng','2'])
-		self.assertEqual(self.bkrs.get_all_pron_variants(u'缩'),[u'sù',u'suō'])
-		self.assertEqual(self.bkrs.get_all_pron_variants(u'一'),[u'yāo', u'yī', u'yí', u'yì'])
+	def test_get_with_tone_mark(self):
+		self.assertEqual(self.bkrs.get_with_tone_mark(u'san1'),u'sān')
+
+	def test_get_cedict_pron_variants(self):
+		self.assertEqual(self.bkrs.get_cedict_pron_variants(u'戛'),[u'jiá'])
+		#self.assertEqual(self.bkrs.get_cedict_pron_variants(u'账'),[u'jiá'])
+
+	def test_get_pron_variants(self):
+		self.assertEqual(self.bkrs.get_pron_variants(u'戛'), [u'jiá', u'gā'])
+		self.assertEqual(self.bkrs.get_pron_variants(u'齐'), [u'jì', u'qí', u'zhāi', u'zī'])
+		self.assertEqual(self.bkrs.get_pron_variants(u'3'),[u'sān', '3'])
+		self.assertEqual(self.bkrs.get_pron_variants(u'2'),[u'èr',u'liǎng','2'])
+		self.assertEqual(self.bkrs.get_pron_variants(u'缩'),[u'sù',u'suō'])
+		self.assertEqual(self.bkrs.get_pron_variants(u'*'),[])
+		self.assertEqual(self.bkrs.get_pron_variants(u'一'),[ u'yī', u'yí', u'yì', u'yāo'])
+		#self.assertEqual(self.bkrs.get_pron_variants(u'账'),[u'',u''])
 
 	def test_get_with_mixed_tones(self):
 		self.assertEqual(self.bkrs.get_with_mixed_tones([u'sān']),[u'sān',u'sán',u'sǎn',u'sàn',u'san'])
@@ -88,6 +98,7 @@ class TestBKRS2DB (unittest.TestCase):
 	
 	def test_pinyin_have_bad_symbol(self):
 		self.assertEqual(self.bkrs.pinyin_have_bad_symbol(u'16把机械手刀库'),False)
+		self.assertEqual(self.bkrs.pinyin_have_bad_symbol(u'ā’ěrtàishān'),False)
 		self.assertEqual(self.bkrs.pinyin_have_bad_symbol(u'α-亚麻酸'),False)
 		self.assertEqual(self.bkrs.pinyin_have_bad_symbol(u'​'),True) #not visible symbol
 		self.assertEqual(self.bkrs.pinyin_have_bad_symbol(u'​·'),True)
@@ -115,6 +126,7 @@ class TestBKRS2DB (unittest.TestCase):
 		self.assertEqual(self.bkrs.filter_pinyin(u'gōngyì fāng\ àn'),u'gōngyì fāng àn')
 		self.assertEqual(self.bkrs.filter_pinyin(u'dòufu – ruǎn '),u'dòufu ruǎn')
 		self.assertEqual(self.bkrs.filter_pinyin(u'ā’ěrfǎ yàmásuān'),u'ā’ěrfǎ yàmásuān')
+		self.assertEqual(self.bkrs.filter_pinyin(u'ā’ěrtàishān'),u'ā’ěrtàishān')
 	
 	def test_filter_hanzi(self):
 		self.assertEqual(self.bkrs.filter_hanzi(u'桂,花-木,茸 '), u'桂花木茸')
@@ -147,7 +159,9 @@ class TestBKRS2DB (unittest.TestCase):
 		self.assertEqual(self.bkrs.convert_full_pinyin(u'三，无', u'sān,wú'), [[(u'三', u'san1',' '), (u'无', u'wu2','')]])
 		self.assertEqual(self.bkrs.convert_full_pinyin(u'唳，草', u'lì,cǎo'), [[(u'唳', u'li4',' '), (u'草', u'cao3','')]])
 
-
+		self.assertEqual(self.convert_to_num(u'差额账', u'chā’ ézhàng'), u'')
+		self.assertEqual(self.convert_to_num(u'亗', u'suì'), u'sui4')
+		self.assertEqual(self.convert_to_num(u'阿尔泰山', u'ā’ěrtàishān'), u'a1’er3tai4shan1')
 		self.assertEqual(self.convert_to_num(u'α-亚麻酸', u'ā’ěrfǎ yàmásuān'), u'a1’er3fa3 ya4ma2suan1')
 		self.assertEqual(self.convert_to_num(u'ζ电势', u'jiétǎ diànshì'), 'jie2ta3 dian4shi4')
 		self.assertEqual(self.convert_to_num(u'ζ电势', u'jiétǎdiànshì'), 'jie2ta3dian4shi4')
@@ -180,6 +194,10 @@ class TestBKRS2DB (unittest.TestCase):
 		self.assertEqual(self.convert_to_num(u'缩', u'suō'), 'suo1')
 		self.assertEqual(self.convert_to_num(u'铀浓缩计划', u'yóunóngsuō jìhuà'), 'you2nong2suo1 ji4hua4')
 		self.assertEqual(self.convert_to_num(u'雷公打豆腐–软处下手', u'léigōng dǎ dòufu – ruǎn chù xià shǒu'), 'lei2gong1 da3 dou4fu5 ruan3 chu4 xia4 shou3')
+		self.assertEqual(self.convert_to_num(u'呕暖', u'ǒunuǎn,ǒunuan'), 'ou3nuan3, ou3nuan5')
+		self.assertEqual(self.convert_to_num(u'士', u'tǔ'), '') 
+		self.assertEqual(self.convert_to_num(u'账', u'zhàng'), 'zhang4') 
+
 		#self.assertEqual(self.convert_to_num(u'20国集团', u'èrshíguó jítuán'), 'er4 shi2 guo2 ji2 tuan2')
 		#self.assertEqual(self.convert_to_num(u'旧金山49人', u'jiùjīnshān sìshíjiǔrén'), 'jiu4 jin1 shan1 si4 shi2 jiu3 ren2')
 		#self.assertEqual(self.convert_to_num(u'百一非', u'bǎi fēi'), 'bai3 fei1')
